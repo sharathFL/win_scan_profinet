@@ -154,8 +154,8 @@ def capture_packets(interface=None, packet_count=10, packet_filter=None, timeout
 def capture_lldp(interface=None, packet_count=10, timeout=10):
     print(f"=== Capturing LLDP Packets (timeout: {timeout}s) ===")
     try:
-        # Capture LLDP packets with minimal processing
-        cmd = [TSHARK_PATH, '-i', interface or '1', '-f', 'lldp', '-a', f'duration:{timeout}', '-c', str(packet_count)]
+        # LLDP uses Ethernet type 0x88cc (capture filter syntax, not display filter)
+        cmd = [TSHARK_PATH, '-i', interface or '1', '-f', 'ether proto 0x88cc', '-a', f'duration:{timeout}', '-c', str(packet_count)]
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -185,7 +185,8 @@ def capture_lldp(interface=None, packet_count=10, timeout=10):
 def capture_profinet(interface=None, packet_count=10, timeout=10):
     print(f"=== Capturing PROFINET Packets (timeout: {timeout}s) ===")
     try:
-        pn_filter = "tcp.port == 34964 or tcp.port == 34965 or tcp.port == 34960 or tcp.port == 2869 or tcp.port == 3702"
+        # PROFINET capture filter (BPF syntax, not display filter)
+        pn_filter = "tcp port 34964 or tcp port 34965 or tcp port 34960 or tcp port 2869 or tcp port 3702"
 
         cmd = [TSHARK_PATH, '-i', interface or '1', '-f', pn_filter, '-a', f'duration:{timeout}', '-c', str(packet_count)]
 
