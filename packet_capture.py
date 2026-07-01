@@ -181,12 +181,12 @@ def capture_lldp(interface=None, packet_count=10, timeout=10):
     except Exception as e:
         print(f"Error: {e}")
 
-# Capture PROFINET packets only
+# Capture PROFINET packets only (PROFINET-RT: EtherType 0x8892, 0x8891)
 def capture_profinet(interface=None, packet_count=10, timeout=10):
     print(f"=== Capturing PROFINET Packets (timeout: {timeout}s) ===")
     try:
-        # PROFINET capture filter (BPF syntax, not display filter)
-        pn_filter = "tcp port 34964 or tcp port 34965 or tcp port 34960 or tcp port 2869 or tcp port 3702"
+        # PROFINET-RT: EtherType 0x8892 (RT) + 0x8891 (CBA) + TCP ports
+        pn_filter = "ether proto 0x8892 or ether proto 0x8891 or tcp port 34964 or tcp port 34965 or tcp port 34960"
 
         cmd = [TSHARK_PATH, '-i', interface or '1', '-f', pn_filter, '-a', f'duration:{timeout}', '-c', str(packet_count)]
 
