@@ -214,26 +214,45 @@ def capture_profinet(interface=None, packet_count=10, timeout=10):
     except Exception as e:
         print(f"Error: {e}")
 
-# Capture all packets (no filter)
+# Capture all packets (no filter) with formatted output
 def capture_all(interface=None, packet_count=10, timeout=10):
-    print(f"=== Capturing All Packets (timeout: {timeout}s) ===")
+    print(f"=== Capturing All Packets (timeout: {timeout}s) ===\n")
     try:
-        cmd = [TSHARK_PATH, '-i', interface or '1', '-a', f'duration:{timeout}', '-c', str(packet_count)]
+        # Use tshark with formatted output fields
+        cmd = [TSHARK_PATH, '-i', interface or '1', '-a', f'duration:{timeout}', '-c', str(packet_count),
+               '-T', 'fields', '-e', 'frame.number', '-e', 'frame.time_epoch', '-e', 'ip.src', '-e', 'ip.dst',
+               '-e', 'eth.src', '-e', 'eth.dst', '-e', 'frame.protocols', '-e', 'frame.len', '-e', 'info']
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
-            print(f"tshark error: {result.stderr}")
-            return
+            # Fallback: no field filter, just raw output
+            cmd_simple = [TSHARK_PATH, '-i', interface or '1', '-a', f'duration:{timeout}', '-c', str(packet_count)]
+            result = subprocess.run(cmd_simple, capture_output=True, text=True)
 
         lines = result.stdout.strip().split('\n')
         if not lines or lines[0] == '':
             print("No packets captured.")
             return
 
-        for line in lines:
-            if line.strip() and line[0].isdigit():
-                print(line)
+        print(f"{'#':<4} {'Time':<12} {'Src IP':<15} {'Dst IP':<15} {'Protocol':<20} {'Length':<8} {'Info':<50}")
+        print("-" * 140)
+
+        for i, line in enumerate(lines, 1):
+            if line.strip():
+                fields = line.split('\t')
+                if len(fields) >= 7:
+                    pkt_num = fields[0] if fields[0] else str(i)
+                    timestamp = fields[1][:10] if len(fields[1]) > 10 else fields[1]
+                    src_ip = fields[2][:15] if fields[2] else "N/A"
+                    dst_ip = fields[3][:15] if fields[3] else "N/A"
+                    protocols = fields[6][:20] if len(fields) > 6 and fields[6] else "N/A"
+                    length = fields[7] if len(fields) > 7 else "0"
+                    info = fields[8][:50] if len(fields) > 8 else ""
+
+                    print(f"{pkt_num:<4} {timestamp:<12} {src_ip:<15} {dst_ip:<15} {protocols:<20} {length:<8} {info:<50}")
+                else:
+                    print(line)
     except FileNotFoundError:
         print("Error: tshark not found. Install Wireshark with tshark.")
     except Exception as e:
