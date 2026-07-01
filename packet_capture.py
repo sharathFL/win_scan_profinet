@@ -5,6 +5,8 @@ import platform
 from ipaddress import IPv4Network
 import struct
 import binascii
+import argparse
+import sys
 
 # List network interfaces (devices)
 def list_interfaces():
@@ -188,18 +190,43 @@ def scan_network(network="192.168.1.0/24"):
         print(f"Error: {e}")
 
 if __name__ == "__main__":
-    # Run examples
-    list_interfaces()
-    list_local_ips()
+    parser = argparse.ArgumentParser(description="Network packet sniffer - LLDP/PROFINET parser")
+    parser.add_argument("-i", "--interface", type=str, help="Network interface to capture on")
+    parser.add_argument("-t", "--timeout", type=int, default=10, help="Capture timeout in seconds (default: 10)")
+    parser.add_argument("--list-ifaces", action="store_true", help="List available network interfaces")
+    parser.add_argument("--lldp", action="store_true", help="Capture LLDP packets")
+    parser.add_argument("--profinet", action="store_true", help="Capture PROFINET packets")
+    parser.add_argument("--tcp", action="store_true", help="Capture TCP packets")
+    parser.add_argument("--arp", action="store_true", help="Perform ARP scan on network")
+    parser.add_argument("-c", "--count", type=int, default=20, help="Number of packets to capture (default: 20)")
 
-    # Capture LLDP packets (topology discovery)
-    # capture_lldp(packet_count=20)
+    args = parser.parse_args()
 
-    # Capture PROFINET packets (industrial automation)
-    # capture_profinet(packet_count=30)
+    # List interfaces
+    if args.list_ifaces:
+        list_interfaces()
+        list_local_ips()
+        sys.exit(0)
 
-    # Capture TCP packets
-    # capture_packets(packet_count=5, packet_filter="tcp")
+    # Require interface for capture modes
+    if not args.interface and not args.arp:
+        parser.print_help()
+        list_interfaces()
+        list_local_ips()
+        sys.exit(1)
 
-    # Scan network (requires scapy)
-    # scan_network("192.168.1.0/24")
+    # Default: show info and interfaces
+    if not any([args.lldp, args.profinet, args.tcp, args.arp]):
+        list_interfaces()
+        list_local_ips()
+        sys.exit(0)
+
+    # Execute requested mode
+    if args.lldp:
+        capture_lldp(interface=args.interface, packet_count=args.count, timeout=args.timeout)
+    elif args.profinet:
+        capture_profinet(interface=args.interface, packet_count=args.count, timeout=args.timeout)
+    elif args.tcp:
+        capture_packets(interface=args.interface, packet_count=args.count, packet_filter="tcp", timeout=args.timeout)
+    elif args.arp:
+        scan_network(network=args.interface if args.interface else "192.168.1.0/24")
