@@ -5,6 +5,7 @@ import argparse
 import sys
 import os
 import json
+import re
 
 # Auto-detect tshark path on Windows
 TSHARK_PATH = "tshark"
@@ -120,64 +121,87 @@ def capture_profinet(interface, packet_count=20, timeout=30):
     for line in lines:
         print(line)
 
-# --devices: parse LLDP JSON and print device table
+def _parse_lldp_verbose(text):
+    """Parse tshark -V verbose LLDP output into device dicts keyed by MAC."""
+    devices = {}
+    current_mac = None
+    dev = {}
+
+    def flush():
+        if current_mac and dev:
+            if current_mac not in devices:
+                devices[current_mac] = dev.copy()
+
+    for line in text.splitlines():
+        # New frame
+        m = re.match(r'^Frame \d+:', line)
+        if m:
+            flush()
+            dev = {}
+            current_mac = None
+            continue
+
+        s = line.strip()
+
+        # Source MAC from Ethernet header
+        if s.startswith('Source:') and current_mac is None:
+            mac = re.search(r'([0-9a-f]{2}(?::[0-9a-f]{2}){5})', s, re.I)
+            if mac:
+                current_mac = mac.group(1).lower()
+
+        # LLDP fields
+        if s.startswith('Chassis ID ='):
+            dev['Chassis ID'] = s.split('=', 1)[1].strip()
+        elif s.startswith('Port ID ='):
+            dev['Port ID'] = s.split('=', 1)[1].strip()[:35]
+        elif s.startswith('System Name ='):
+            dev['System Name'] = s.split('=', 1)[1].strip()
+        elif s.startswith('System Description ='):
+            dev['Description'] = s.split('=', 1)[1].strip()[:60]
+        elif s.startswith('Management Address =') and 'Mgmt IP' not in dev:
+            dev['Mgmt IP'] = s.split('=', 1)[1].strip()
+        elif 'TTL' in s and 'TTL' not in dev:
+            m = re.search(r'TTL\s*=\s*(\d+)', s)
+            if m:
+                dev['TTL'] = m.group(1)
+
+    flush()
+    return devices
+
+# --devices: parse LLDP verbose output and print device table
 def scan_devices(interface, timeout=30):
     print(f"=== Device Scan via LLDP (timeout: {timeout}s) ===\n")
     out = _tshark_run(['-i', interface,
                        '-f', 'ether proto 0x88cc',
                        '-a', f'duration:{timeout}',
-                       '-T', 'json'])
+                       '-V'])   # verbose: human-readable field names
     if out is None or not out.strip():
         print("No LLDP packets found.")
         return
 
-    try:
-        packets = json.loads(out)
-    except json.JSONDecodeError:
-        try:
-            packets = json.loads(out.rstrip(',\n') + ']')
-        except:
-            print("Failed to parse JSON.")
-            return
-
-    devices = {}
-    for pkt in packets:
-        try:
-            layers = pkt.get('_source', {}).get('layers', {})
-            eth  = layers.get('eth', {})
-            lldp = layers.get('lldp', {})
-
-            mac         = eth.get('eth.src', 'Unknown')
-            chassis_id  = _find(lldp, 'lldp.chassis.id') or ''
-            port_id     = _find(lldp, 'lldp.port.id') or ''
-            system_name = _find(lldp, 'lldp.system.name') or ''
-            system_desc = _find(lldp, 'lldp.system.desc') or ''
-            mgmt_ip     = _find(lldp, 'lldp.mgn.addr.ip4') or ''
-
-            if mac not in devices:
-                devices[mac] = {
-                    'MAC':        mac,
-                    'Name':       system_name[:25],
-                    'Chassis ID': chassis_id[:25],
-                    'Port':       port_id[:30],
-                    'Mgmt IP':    mgmt_ip,
-                    'Description': system_desc[:55],
-                }
-        except:
-            continue
+    devices = _parse_lldp_verbose(out)
 
     if not devices:
         print("No devices parsed from LLDP.")
         return
 
-    cols = ['MAC', 'Name', 'Chassis ID', 'Port', 'Mgmt IP', 'Description']
-    widths = {c: max(len(c), max(len(str(d[c])) for d in devices.values())) for c in cols}
+    cols = ['MAC', 'System Name', 'Chassis ID', 'Port ID', 'Mgmt IP', 'TTL', 'Description']
+    # Merge MAC into device dict
+    for mac, d in devices.items():
+        d['MAC'] = mac
+
+    rows = list(devices.values())
+    widths = {}
+    for c in cols:
+        vals = [len(str(r.get(c, ''))) for r in rows]
+        widths[c] = max(len(c), max(vals) if vals else 0)
+
     sep = '  '
     header = sep.join(f"{c:<{widths[c]}}" for c in cols)
     print(header)
     print('-' * len(header))
-    for d in devices.values():
-        print(sep.join(f"{str(d[c]):<{widths[c]}}" for c in cols))
+    for r in rows:
+        print(sep.join(f"{str(r.get(c,'')):<{widths[c]}}" for c in cols))
     print(f"\n{len(devices)} device(s) found.")
 
 if __name__ == "__main__":
