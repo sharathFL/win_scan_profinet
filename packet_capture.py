@@ -1,320 +1,226 @@
-import pyshark
 import socket
 import subprocess
 import platform
-from ipaddress import IPv4Network
-import struct
-import binascii
 import argparse
 import sys
 import os
+import json
 
-# Detect tshark path
+# Auto-detect tshark path on Windows
 TSHARK_PATH = "tshark"
 if platform.system() == "Windows":
-    wireshark_paths = [
-        r"C:\Program Files\Wireshark\tshark.exe",
-        r"C:\Program Files (x86)\Wireshark\tshark.exe",
-    ]
-    for path in wireshark_paths:
+    for path in [r"C:\Program Files\Wireshark\tshark.exe",
+                 r"C:\Program Files (x86)\Wireshark\tshark.exe"]:
         if os.path.exists(path):
             TSHARK_PATH = path
             break
 
-# List network interfaces (devices)
+def _tshark(args):
+    return subprocess.Popen(
+        [TSHARK_PATH] + args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1
+    )
+
+def _tshark_run(args):
+    result = subprocess.run([TSHARK_PATH] + args, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"tshark error: {result.stderr.strip()}")
+        return None
+    return result.stdout
+
+def _find(d, key):
+    if isinstance(d, dict):
+        if key in d:
+            return d[key]
+        for v in d.values():
+            r = _find(v, key)
+            if r is not None:
+                return r
+    return None
+
 def list_interfaces():
     print("=== Network Interfaces ===")
     if platform.system() == "Windows":
-        result = subprocess.run(['ipconfig'], capture_output=True, text=True)
-        print(result.stdout)
+        r = subprocess.run(['ipconfig'], capture_output=True, text=True)
+        print(r.stdout)
     else:
-        result = subprocess.run(['ip', 'link', 'show'], capture_output=True, text=True)
-        print(result.stdout)
+        r = subprocess.run(['ip', 'link', 'show'], capture_output=True, text=True)
+        print(r.stdout)
 
-# Get local IP addresses
 def list_local_ips():
-    print("\n=== Local IP Addresses ===")
+    print("=== Local IPs ===")
     try:
         hostname = socket.gethostname()
-        local_ip = socket.gethostbyname(hostname)
-        print(f"Hostname: {hostname}")
-        print(f"Primary IP: {local_ip}")
-    except:
-        print("Could not retrieve IP")
-
-    # Alternative: all IPs
-    try:
-        all_ips = socket.gethostbyname_ex(socket.gethostname())
-        print(f"All IPs: {all_ips[2]}")
-    except:
-        pass
-
-# Parse LLDP packets
-def parse_lldp_packet(packet):
-    print(f"\n[LLDP Packet]")
-    try:
-        print(f"  Layers: {packet.layers}")
-
-        if 'LLDP' in packet:
-            lldp = packet['LLDP']
-
-            # Chassis ID
-            if hasattr(lldp, 'chassis_id'):
-                print(f"  Chassis ID: {lldp.chassis_id}")
-            if hasattr(lldp, 'chassis_subtype'):
-                print(f"  Chassis Type: {lldp.chassis_subtype}")
-
-            # Port ID
-            if hasattr(lldp, 'port_id'):
-                print(f"  Port ID: {lldp.port_id}")
-            if hasattr(lldp, 'port_subtype'):
-                print(f"  Port Type: {lldp.port_subtype}")
-
-            # TTL
-            if hasattr(lldp, 'ttl'):
-                print(f"  TTL: {lldp.ttl}")
-
-            # System Name
-            if hasattr(lldp, 'system_name'):
-                print(f"  System Name: {lldp.system_name}")
-
-            # System Description
-            if hasattr(lldp, 'system_description'):
-                print(f"  Description: {lldp.system_description[:50]}...")
-
-            # Capabilities
-            if hasattr(lldp, 'caps_available'):
-                print(f"  Capabilities: {lldp.caps_available}")
-        else:
-            print(f"  No LLDP layer found. Available: {list(packet.keys())[:5]}")
-    except Exception as e:
-        print(f"  Error parsing LLDP: {e}")
-
-# Parse PROFINET/PN-PTCP packets
-def parse_profinet_packet(packet):
-    print(f"\n[PROFINET Packet]")
-    try:
-        # PROFINET uses specific TCP ports (34964, 34965, 2869, 34960)
-        if 'TCP' in packet:
-            tcp = packet['TCP']
-            src_port = int(tcp.srcport)
-            dst_port = int(tcp.dstport)
-
-            # Known PROFINET ports
-            pn_ports = [34964, 34965, 34960, 2869, 3702, 5353]
-
-            if src_port in pn_ports or dst_port in pn_ports:
-                print(f"  Source: {packet['IP'].src}:{src_port}")
-                print(f"  Destination: {packet['IP'].dst}:{dst_port}")
-                print(f"  Port: {src_port if src_port in pn_ports else dst_port} (PROFINET)")
-
-                if 'PNIO' in packet:
-                    print(f"  PNIO Layer: {packet['PNIO']}")
-
-                if hasattr(packet, 'Raw'):
-                    raw_data = packet['Raw'].payload
-                    print(f"  Payload Length: {len(raw_data)} bytes")
-                    print(f"  Hex: {binascii.hexlify(raw_data.encode() if isinstance(raw_data, str) else raw_data)[:64]}...")
-    except Exception as e:
-        print(f"  Error parsing PROFINET: {e}")
-
-# Capture packets from interface
-def capture_packets(interface=None, packet_count=10, packet_filter=None, timeout=10):
-    print(f"\n=== Capturing Packets (Count: {packet_count}, Timeout: {timeout}s) ===")
-    try:
-        if packet_filter:
-            if interface:
-                cap = pyshark.LiveCapture(interface=interface, bpf_filter=packet_filter)
-            else:
-                cap = pyshark.LiveCapture(bpf_filter=packet_filter)
-        else:
-            if interface:
-                cap = pyshark.LiveCapture(interface=interface)
-            else:
-                cap = pyshark.LiveCapture()
-
-        cap.sniff(packet_count=packet_count, timeout=timeout)
-
-        for packet in cap:
-            print(f"\n[{packet.number}] {packet.highest_layer}")
-            if 'IP' in packet:
-                print(f"  SRC: {packet['IP'].src} -> DST: {packet['IP'].dst}")
-            if 'TCP' in packet:
-                print(f"  TCP: {packet['TCP'].srcport} -> {packet['TCP'].dstport}")
-            if 'DNS' in packet:
-                print(f"  DNS Query: {packet['DNS'].qry_name}")
-            if 'LLDP' in packet:
-                parse_lldp_packet(packet)
-            if 'TCP' in packet:
-                parse_profinet_packet(packet)
+        print(f"Hostname : {hostname}")
+        print(f"IPs      : {socket.gethostbyname_ex(hostname)[2]}")
     except Exception as e:
         print(f"Error: {e}")
 
-# Capture LLDP packets only
-def capture_lldp(interface=None, packet_count=10, timeout=10):
-    print(f"=== Capturing LLDP Packets (timeout: {timeout}s) ===")
+# --all: live stream all packets
+def capture_all(interface, packet_count=50, timeout=30):
+    print(f"=== Live Capture — all packets (timeout: {timeout}s, max: {packet_count}) ===")
+    print(f"{'#':<5} {'Src':<20} {'Dst':<20} {'Protocol':<25} {'Len':<6}")
+    print("-" * 90)
+    proc = _tshark(['-i', interface,
+                    '-a', f'duration:{timeout}', '-c', str(packet_count),
+                    '-T', 'fields',
+                    '-e', 'frame.number',
+                    '-e', 'ip.src', '-e', 'ip.dst',
+                    '-e', 'eth.src', '-e', 'eth.dst',
+                    '-e', 'frame.protocols',
+                    '-e', 'frame.len',
+                    '-l'])
     try:
-        # LLDP uses Ethernet type 0x88cc (capture filter syntax, not display filter)
-        cmd = [TSHARK_PATH, '-i', interface or '1', '-f', 'ether proto 0x88cc', '-a', f'duration:{timeout}', '-c', str(packet_count)]
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            print(f"tshark error: {result.stderr}")
-            return
-
-        lines = result.stdout.strip().split('\n')
-        if not lines or lines[0] == '':
-            print("No LLDP packets found. Check if connected to managed network switch.")
-            return
-
-        packet_count_found = 0
-        for line in lines:
-            if line.strip() and line[0].isdigit():
-                print(f"\n{line}")
-                packet_count_found += 1
-
-        if packet_count_found == 0:
-            print("No LLDP packets captured.")
-    except FileNotFoundError:
-        print("Error: tshark not found. Install Wireshark with tshark.")
-    except Exception as e:
-        print(f"Error: {e}")
-
-# Capture PROFINET packets only (PROFINET-RT: EtherType 0x8892, 0x8891)
-def capture_profinet(interface=None, packet_count=10, timeout=10):
-    print(f"=== Capturing PROFINET Packets (timeout: {timeout}s) ===")
-    try:
-        # PROFINET-RT: EtherType 0x8892 (RT) + 0x8891 (CBA) + TCP ports
-        pn_filter = "ether proto 0x8892 or ether proto 0x8891 or tcp port 34964 or tcp port 34965 or tcp port 34960"
-
-        cmd = [TSHARK_PATH, '-i', interface or '1', '-f', pn_filter, '-a', f'duration:{timeout}', '-c', str(packet_count)]
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            print(f"tshark error: {result.stderr}")
-            return
-
-        lines = result.stdout.strip().split('\n')
-        if not lines or lines[0] == '':
-            print("No PROFINET packets found. Check if PLC/industrial devices on network.")
-            return
-
-        packet_count_found = 0
-        for line in lines:
-            if line.strip() and line[0].isdigit():
-                print(f"\n{line}")
-                packet_count_found += 1
-
-        if packet_count_found == 0:
-            print("No PROFINET packets captured.")
-    except FileNotFoundError:
-        print("Error: tshark not found. Install Wireshark with tshark.")
-    except Exception as e:
-        print(f"Error: {e}")
-
-# Stream packets live to terminal
-def capture_all(interface=None, packet_count=10, timeout=30):
-    print(f"=== Capturing All Packets — live stream (Ctrl+C to stop) ===\n")
-    print(f"{'#':<5} {'Src':<18} {'Dst':<18} {'Protocol':<20} {'Len':<6} Info")
-    print("-" * 110)
-    try:
-        cmd = [TSHARK_PATH, '-i', interface or '1',
-               '-a', f'duration:{timeout}', '-c', str(packet_count),
-               '-T', 'fields',
-               '-e', 'frame.number',
-               '-e', 'ip.src', '-e', 'ip.dst',
-               '-e', 'eth.src', '-e', 'eth.dst',
-               '-e', 'frame.protocols',
-               '-e', 'frame.len',
-               '-l']  # -l = line buffered (stream output)
-
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
-
         for line in proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            fields = line.split('\t')
-            if len(fields) >= 6:
-                num      = fields[0]
-                src      = fields[1] or fields[3] or "?"   # ip.src else eth.src
-                dst      = fields[2] or fields[4] or "?"   # ip.dst else eth.dst
-                proto    = fields[5][:20] if fields[5] else "?"
-                length   = fields[6] if len(fields) > 6 else "?"
-                print(f"{num:<5} {src:<18} {dst:<18} {proto:<20} {length:<6}")
-            else:
-                print(line)
-
+            f = line.strip().split('\t')
+            if len(f) >= 6:
+                num   = f[0]
+                src   = f[1] or f[3] or "?"
+                dst   = f[2] or f[4] or "?"
+                proto = f[5][:25] if f[5] else "?"
+                length = f[6] if len(f) > 6 else "?"
+                print(f"{num:<5} {src:<20} {dst:<20} {proto:<25} {length:<6}")
         proc.wait()
     except KeyboardInterrupt:
         proc.terminate()
-        print("\nCapture stopped.")
-    except FileNotFoundError:
-        print("Error: tshark not found. Install Wireshark.")
-    except Exception as e:
-        print(f"Error: {e}")
+        print("\nStopped.")
 
-# Scan local network (ARP scan)
-def scan_network(network="192.168.1.0/24"):
-    print(f"\n=== ARP Scan: {network} ===")
+# --lldp: capture LLDP packets (raw summary)
+def capture_lldp(interface, packet_count=10, timeout=30):
+    print(f"=== LLDP Capture (timeout: {timeout}s) ===")
+    out = _tshark_run(['-i', interface,
+                       '-f', 'ether proto 0x88cc',
+                       '-a', f'duration:{timeout}', '-c', str(packet_count)])
+    if out is None:
+        return
+    lines = [l for l in out.strip().split('\n') if l.strip()]
+    if not lines:
+        print("No LLDP packets found.")
+        return
+    for line in lines:
+        print(line)
+
+# --profinet: capture PROFINET-RT + TCP ports
+def capture_profinet(interface, packet_count=20, timeout=30):
+    print(f"=== PROFINET Capture (timeout: {timeout}s) ===")
+    pn_filter = ("ether proto 0x8892 or ether proto 0x8891 or "
+                 "tcp port 34964 or tcp port 34965 or tcp port 34960")
+    out = _tshark_run(['-i', interface,
+                       '-f', pn_filter,
+                       '-a', f'duration:{timeout}', '-c', str(packet_count)])
+    if out is None:
+        return
+    lines = [l for l in out.strip().split('\n') if l.strip()]
+    if not lines:
+        print("No PROFINET packets found.")
+        return
+    for line in lines:
+        print(line)
+
+# --devices: parse LLDP JSON and print device table
+def scan_devices(interface, timeout=30):
+    print(f"=== Device Scan via LLDP (timeout: {timeout}s) ===\n")
+    out = _tshark_run(['-i', interface,
+                       '-f', 'ether proto 0x88cc',
+                       '-a', f'duration:{timeout}',
+                       '-T', 'json'])
+    if out is None or not out.strip():
+        print("No LLDP packets found.")
+        return
+
     try:
-        from scapy.all import ARP, Ether, srp
-        arp = ARP(pdst=network)
-        ether = Ether(dst="ff:ff:ff:ff:ff:ff")
-        packet = ether/arp
+        packets = json.loads(out)
+    except json.JSONDecodeError:
+        try:
+            packets = json.loads(out.rstrip(',\n') + ']')
+        except:
+            print("Failed to parse JSON.")
+            return
 
-        result = srp(packet, timeout=2, verbose=False)[0]
-        print(f"{'IP':<15} {'MAC':<20}")
-        for sent, received in result:
-            print(f"{received.psrc:<15} {received.hwsrc:<20}")
-    except ImportError:
-        print("Scapy not installed. Run: pip install scapy")
-    except Exception as e:
-        print(f"Error: {e}")
+    devices = {}
+    for pkt in packets:
+        try:
+            layers = pkt.get('_source', {}).get('layers', {})
+            eth  = layers.get('eth', {})
+            lldp = layers.get('lldp', {})
+
+            mac         = eth.get('eth.src', 'Unknown')
+            chassis_id  = _find(lldp, 'lldp.chassis.id') or ''
+            port_id     = _find(lldp, 'lldp.port.id') or ''
+            system_name = _find(lldp, 'lldp.system.name') or ''
+            system_desc = _find(lldp, 'lldp.system.desc') or ''
+            mgmt_ip     = _find(lldp, 'lldp.mgn.addr.ip4') or ''
+
+            if mac not in devices:
+                devices[mac] = {
+                    'MAC':        mac,
+                    'Name':       system_name[:25],
+                    'Chassis ID': chassis_id[:25],
+                    'Port':       port_id[:30],
+                    'Mgmt IP':    mgmt_ip,
+                    'Description': system_desc[:55],
+                }
+        except:
+            continue
+
+    if not devices:
+        print("No devices parsed from LLDP.")
+        return
+
+    cols = ['MAC', 'Name', 'Chassis ID', 'Port', 'Mgmt IP', 'Description']
+    widths = {c: max(len(c), max(len(str(d[c])) for d in devices.values())) for c in cols}
+    sep = '  '
+    header = sep.join(f"{c:<{widths[c]}}" for c in cols)
+    print(header)
+    print('-' * len(header))
+    for d in devices.values():
+        print(sep.join(f"{str(d[c]):<{widths[c]}}" for c in cols))
+    print(f"\n{len(devices)} device(s) found.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Network packet sniffer - LLDP/PROFINET parser")
-    parser.add_argument("-i", "--interface", type=str, help="Network interface to capture on")
-    parser.add_argument("-t", "--timeout", type=int, default=10, help="Capture timeout in seconds (default: 10)")
-    parser.add_argument("--list-ifaces", action="store_true", help="List available network interfaces")
-    parser.add_argument("--lldp", action="store_true", help="Capture LLDP packets")
-    parser.add_argument("--profinet", action="store_true", help="Capture PROFINET packets")
-    parser.add_argument("--tcp", action="store_true", help="Capture TCP packets")
-    parser.add_argument("--arp", action="store_true", help="Perform ARP scan on network")
-    parser.add_argument("--all", action="store_true", help="Capture all packets (no filter)")
-    parser.add_argument("-c", "--count", type=int, default=20, help="Number of packets to capture (default: 20)")
-
+    parser = argparse.ArgumentParser(description="Network sniffer — LLDP / PROFINET / General")
+    parser.add_argument("-i", "--interface", type=str, help="Network interface (e.g. 'Ethernet 2')")
+    parser.add_argument("-t", "--timeout",   type=int, default=30, help="Capture duration in seconds (default: 30)")
+    parser.add_argument("-c", "--count",     type=int, default=50,  help="Max packet count (default: 50)")
+    parser.add_argument("--list-ifaces",  action="store_true", help="List interfaces and local IPs")
+    parser.add_argument("--all",          action="store_true", help="Live stream all packets")
+    parser.add_argument("--lldp",         action="store_true", help="Capture LLDP packets")
+    parser.add_argument("--profinet",     action="store_true", help="Capture PROFINET-RT packets")
+    parser.add_argument("--devices",      action="store_true", help="Scan devices via LLDP (pretty table)")
+    parser.add_argument("--arp",          type=str, metavar="SUBNET", help="ARP scan subnet e.g. 192.168.1.0/24")
     args = parser.parse_args()
 
-    # List interfaces
-    if args.list_ifaces:
+    if args.list_ifaces or not any([args.all, args.lldp, args.profinet, args.devices, args.arp]):
         list_interfaces()
         list_local_ips()
         sys.exit(0)
 
-    # Require interface for capture modes
-    if not args.interface and not args.arp:
-        parser.print_help()
+    if args.arp:
+        try:
+            from scapy.all import ARP, Ether, srp
+            arp = ARP(pdst=args.arp)
+            result = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / arp, timeout=2, verbose=False)[0]
+            print(f"\n{'IP':<15} {'MAC'}")
+            print("-" * 35)
+            for _, r in result:
+                print(f"{r.psrc:<15} {r.hwsrc}")
+        except ImportError:
+            print("scapy not installed: pip install scapy")
+        sys.exit(0)
+
+    if not args.interface:
+        print("Error: -i/--interface required for capture modes.")
         list_interfaces()
-        list_local_ips()
         sys.exit(1)
 
-    # Default: show info and interfaces
-    if not any([args.lldp, args.profinet, args.tcp, args.arp, args.all]):
-        list_interfaces()
-        list_local_ips()
-        sys.exit(0)
-
-    # Execute requested mode
-    if args.lldp:
+    if args.devices:
+        scan_devices(interface=args.interface, timeout=args.timeout)
+    elif args.lldp:
         capture_lldp(interface=args.interface, packet_count=args.count, timeout=args.timeout)
     elif args.profinet:
         capture_profinet(interface=args.interface, packet_count=args.count, timeout=args.timeout)
-    elif args.tcp:
-        capture_packets(interface=args.interface, packet_count=args.count, packet_filter="tcp", timeout=args.timeout)
     elif args.all:
         capture_all(interface=args.interface, packet_count=args.count, timeout=args.timeout)
-    elif args.arp:
-        scan_network(network=args.interface if args.interface else "192.168.1.0/24")
