@@ -174,11 +174,11 @@ def _parse_lldp_verbose(text, debug=False):
         elif re.match(r'system description\s*=', sl):
             dev['Description'] = s.split('=', maxsplit=1)[1].strip()[:70]
 
-        # Management Address = 192.168.x.x
-        elif re.match(r'management address\s*=', sl) and 'Mgmt IP' not in dev:
-            val = s.split('=', maxsplit=1)[1].strip()
-            if re.match(r'\d+\.\d+\.\d+\.\d+', val):
-                dev['Mgmt IP'] = val
+        # Management Address = 192.168.x.x  (any line containing an IP after =)
+        elif 'management address' in sl and '=' in s and 'Mgmt IP' not in dev:
+            m3 = re.search(r'=\s*(\d+\.\d+\.\d+\.\d+)', s)
+            if m3:
+                dev['Mgmt IP'] = m3.group(1)
 
         # Time To Live = 20 sec
         elif re.match(r'time to live\s*=', sl) and 'TTL' not in dev:
@@ -207,9 +207,12 @@ def scan_devices(interface, timeout=30, debug=False):
         return
 
     cols = ['MAC', 'System Name', 'Chassis ID', 'Port ID', 'Mgmt IP', 'TTL', 'Description']
-    # Merge MAC into device dict
+    # Merge MAC into device dict + fallback System Name
     for mac, d in devices.items():
         d['MAC'] = mac
+        if not d.get('System Name'):
+            # Use first segment of Chassis ID as name
+            d['System Name'] = d.get('Chassis ID', '').split()[0][:20]
 
     rows = list(devices.values())
     widths = {}
