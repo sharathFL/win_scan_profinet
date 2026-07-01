@@ -214,6 +214,31 @@ def capture_profinet(interface=None, packet_count=10, timeout=10):
     except Exception as e:
         print(f"Error: {e}")
 
+# Capture all packets (no filter)
+def capture_all(interface=None, packet_count=10, timeout=10):
+    print(f"=== Capturing All Packets (timeout: {timeout}s) ===")
+    try:
+        cmd = [TSHARK_PATH, '-i', interface or '1', '-a', f'duration:{timeout}', '-c', str(packet_count)]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            print(f"tshark error: {result.stderr}")
+            return
+
+        lines = result.stdout.strip().split('\n')
+        if not lines or lines[0] == '':
+            print("No packets captured.")
+            return
+
+        for line in lines:
+            if line.strip() and line[0].isdigit():
+                print(line)
+    except FileNotFoundError:
+        print("Error: tshark not found. Install Wireshark with tshark.")
+    except Exception as e:
+        print(f"Error: {e}")
+
 # Scan local network (ARP scan)
 def scan_network(network="192.168.1.0/24"):
     print(f"\n=== ARP Scan: {network} ===")
@@ -241,6 +266,7 @@ if __name__ == "__main__":
     parser.add_argument("--profinet", action="store_true", help="Capture PROFINET packets")
     parser.add_argument("--tcp", action="store_true", help="Capture TCP packets")
     parser.add_argument("--arp", action="store_true", help="Perform ARP scan on network")
+    parser.add_argument("--all", action="store_true", help="Capture all packets (no filter)")
     parser.add_argument("-c", "--count", type=int, default=20, help="Number of packets to capture (default: 20)")
 
     args = parser.parse_args()
@@ -259,7 +285,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # Default: show info and interfaces
-    if not any([args.lldp, args.profinet, args.tcp, args.arp]):
+    if not any([args.lldp, args.profinet, args.tcp, args.arp, args.all]):
         list_interfaces()
         list_local_ips()
         sys.exit(0)
@@ -271,5 +297,7 @@ if __name__ == "__main__":
         capture_profinet(interface=args.interface, packet_count=args.count, timeout=args.timeout)
     elif args.tcp:
         capture_packets(interface=args.interface, packet_count=args.count, packet_filter="tcp", timeout=args.timeout)
+    elif args.all:
+        capture_all(interface=args.interface, packet_count=args.count, timeout=args.timeout)
     elif args.arp:
         scan_network(network=args.interface if args.interface else "192.168.1.0/24")
