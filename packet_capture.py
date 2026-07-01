@@ -157,10 +157,9 @@ def _parse_lldp_verbose(text, debug=False):
         # "Chassis Subtype = Locally assigned, Id: S7-1500..."
         m = re.match(r'chassis subtype\s*=.*?,\s*id:\s*(.+)', sl)
         if m:
-            # Get original case from s using same offset
             idx = s.lower().find(', id:')
             if idx != -1:
-                dev['Chassis ID'] = s[idx+5:].strip()[:30]
+                dev['Chassis ID'] = ' '.join(s[idx+5:].strip().split())[:30]
 
         # Port Id: port-001...
         elif re.match(r'port id:', sl):
@@ -174,9 +173,9 @@ def _parse_lldp_verbose(text, debug=False):
         elif re.match(r'system description\s*=', sl):
             dev['Description'] = s.split('=', maxsplit=1)[1].strip()[:70]
 
-        # Management Address = 192.168.x.x  (any line containing an IP after =)
-        elif 'management address' in sl and '=' in s and 'Mgmt IP' not in dev:
-            m3 = re.search(r'=\s*(\d+\.\d+\.\d+\.\d+)', s)
+        # Management Address: 192.168.x.x  (colon separator in tshark verbose)
+        elif 'management address' in sl and 'Mgmt IP' not in dev:
+            m3 = re.search(r'[\s:=](\d+\.\d+\.\d+\.\d+)', s)
             if m3:
                 dev['Mgmt IP'] = m3.group(1)
 
