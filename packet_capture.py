@@ -40,6 +40,8 @@ def list_local_ips():
 def parse_lldp_packet(packet):
     print(f"\n[LLDP Packet]")
     try:
+        print(f"  Layers: {packet.layers}")
+
         if 'LLDP' in packet:
             lldp = packet['LLDP']
 
@@ -70,6 +72,8 @@ def parse_lldp_packet(packet):
             # Capabilities
             if hasattr(lldp, 'caps_available'):
                 print(f"  Capabilities: {lldp.caps_available}")
+        else:
+            print(f"  No LLDP layer found. Available: {list(packet.keys())[:5]}")
     except Exception as e:
         print(f"  Error parsing LLDP: {e}")
 
