@@ -103,17 +103,20 @@ def parse_profinet_packet(packet):
 def capture_packets(interface=None, packet_count=10, packet_filter=None):
     print(f"\n=== Capturing Packets (Count: {packet_count}) ===")
     try:
-        if interface:
-            cap = pyshark.LiveCapture(interface=interface)
-        else:
-            cap = pyshark.LiveCapture()
-
         if packet_filter:
-            cap.sniff(packet_count=packet_count, packet_filter=packet_filter)
+            if interface:
+                cap = pyshark.LiveCapture(interface=interface, bpf_filter=packet_filter)
+            else:
+                cap = pyshark.LiveCapture(bpf_filter=packet_filter)
         else:
-            cap.sniff(packet_count=packet_count)
+            if interface:
+                cap = pyshark.LiveCapture(interface=interface)
+            else:
+                cap = pyshark.LiveCapture()
 
-        for packet in cap:
+        for i, packet in enumerate(cap):
+            if i >= packet_count:
+                break
             print(f"\n[{packet.number}] {packet.highest_layer}")
             if 'IP' in packet:
                 print(f"  SRC: {packet['IP'].src} -> DST: {packet['IP'].dst}")
@@ -133,13 +136,13 @@ def capture_lldp(interface=None, packet_count=10):
     print(f"=== Capturing LLDP Packets ===")
     try:
         if interface:
-            cap = pyshark.LiveCapture(interface=interface)
+            cap = pyshark.LiveCapture(interface=interface, bpf_filter="lldp")
         else:
-            cap = pyshark.LiveCapture()
+            cap = pyshark.LiveCapture(bpf_filter="lldp")
 
-        cap.sniff(packet_count=packet_count, packet_filter="lldp")
-
-        for packet in cap:
+        for i, packet in enumerate(cap):
+            if i >= packet_count:
+                break
             parse_lldp_packet(packet)
     except Exception as e:
         print(f"Error: {e}")
@@ -148,16 +151,16 @@ def capture_lldp(interface=None, packet_count=10):
 def capture_profinet(interface=None, packet_count=10):
     print(f"=== Capturing PROFINET Packets ===")
     try:
-        if interface:
-            cap = pyshark.LiveCapture(interface=interface)
-        else:
-            cap = pyshark.LiveCapture()
-
-        # PROFINET uses specific TCP/UDP ports
         pn_filter = "(tcp.port == 34964) || (tcp.port == 34965) || (tcp.port == 34960) || (tcp.port == 2869) || (tcp.port == 3702)"
-        cap.sniff(packet_count=packet_count, packet_filter=pn_filter)
 
-        for packet in cap:
+        if interface:
+            cap = pyshark.LiveCapture(interface=interface, bpf_filter=pn_filter)
+        else:
+            cap = pyshark.LiveCapture(bpf_filter=pn_filter)
+
+        for i, packet in enumerate(cap):
+            if i >= packet_count:
+                break
             parse_profinet_packet(packet)
     except Exception as e:
         print(f"Error: {e}")
