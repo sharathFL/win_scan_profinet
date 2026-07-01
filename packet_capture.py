@@ -9,13 +9,6 @@ import binascii
 # List network interfaces (devices)
 def list_interfaces():
     print("=== Network Interfaces ===")
-    try:
-        capture = pyshark.LiveCapture()
-        interfaces = capture.sniff(packet_count=0)  # Get interface list
-    except:
-        pass
-
-    # Better approach: use socket
     if platform.system() == "Windows":
         result = subprocess.run(['ipconfig'], capture_output=True, text=True)
         print(result.stdout)
