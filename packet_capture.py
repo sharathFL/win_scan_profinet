@@ -7,6 +7,19 @@ import struct
 import binascii
 import argparse
 import sys
+import os
+
+# Detect tshark path
+TSHARK_PATH = "tshark"
+if platform.system() == "Windows":
+    wireshark_paths = [
+        r"C:\Program Files\Wireshark\tshark.exe",
+        r"C:\Program Files (x86)\Wireshark\tshark.exe",
+    ]
+    for path in wireshark_paths:
+        if os.path.exists(path):
+            TSHARK_PATH = path
+            break
 
 # List network interfaces (devices)
 def list_interfaces():
@@ -142,7 +155,7 @@ def capture_lldp(interface=None, packet_count=10, timeout=10):
     print(f"=== Capturing LLDP Packets (timeout: {timeout}s) ===")
     try:
         # Use tshark directly to avoid pyshark event loop issues on Windows
-        cmd = ['tshark', '-i', interface or '1', '-f', 'lldp', '-a', f'duration:{timeout}', '-c', str(packet_count), '-T', 'fields', '-e', 'frame.number', '-e', 'lldp.chassis.id', '-e', 'lldp.port.id', '-e', 'lldp.system.name']
+        cmd = [TSHARK_PATH, '-i', interface or '1', '-f', 'lldp', '-a', f'duration:{timeout}', '-c', str(packet_count), '-T', 'fields', '-e', 'frame.number', '-e', 'lldp.chassis.id', '-e', 'lldp.port.id', '-e', 'lldp.system.name']
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -177,7 +190,7 @@ def capture_profinet(interface=None, packet_count=10, timeout=10):
     try:
         pn_filter = "tcp.port == 34964 or tcp.port == 34965 or tcp.port == 34960 or tcp.port == 2869 or tcp.port == 3702"
 
-        cmd = ['tshark', '-i', interface or '1', '-f', pn_filter, '-a', f'duration:{timeout}', '-c', str(packet_count), '-T', 'fields', '-e', 'frame.number', '-e', 'ip.src', '-e', 'ip.dst', '-e', 'tcp.srcport', '-e', 'tcp.dstport']
+        cmd = [TSHARK_PATH, '-i', interface or '1', '-f', pn_filter, '-a', f'duration:{timeout}', '-c', str(packet_count), '-T', 'fields', '-e', 'frame.number', '-e', 'ip.src', '-e', 'ip.dst', '-e', 'tcp.srcport', '-e', 'tcp.dstport']
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
