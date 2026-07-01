@@ -125,7 +125,7 @@ def _parse_lldp_verbose(text, debug=False):
     """Parse tshark -V verbose LLDP output into device dicts keyed by MAC."""
     if debug:
         print("=== RAW TSHARK OUTPUT ===")
-        print(text[:3000])
+        print(text[:6000])
         print("=========================\n")
 
     devices = {}
@@ -138,37 +138,50 @@ def _parse_lldp_verbose(text, debug=False):
                 devices[current_mac] = dev.copy()
 
     for line in text.splitlines():
-        m = re.match(r'^Frame \d+:', line)
-        if m:
+        if re.match(r'^Frame \d+:', line):
             flush()
             dev = {}
             current_mac = None
             continue
 
         s = line.strip()
+        sl = s.lower()
 
-        # Source MAC — tshark verbose shows "Src: VendorName (aa:bb:cc:dd:ee:ff)"
-        if current_mac is None and ('Src:' in s or 'Source:' in s):
-            mac = re.search(r'([0-9a-f]{2}(?::[0-9a-f]{2}){5})', s, re.I)
+        # Source MAC from Ethernet line: "Ethernet II, Src: Name (aa:bb:cc:dd:ee:ff)"
+        if current_mac is None and ('src:' in sl or 'source:' in sl):
+            mac = re.search(r'\(([0-9a-f]{2}(?::[0-9a-f]{2}){5})\)', s, re.I)
             if mac:
                 current_mac = mac.group(1).lower()
 
-        # Case-insensitive field matching
-        sl = s.lower()
-        if re.match(r'chassis id\s*=|chassis id:', sl):
-            dev['Chassis ID'] = re.split(r'[=:]', s, 1)[1].strip()
-        elif re.match(r'port id\s*=|port id:', sl):
-            dev['Port ID'] = re.split(r'[=:]', s, 1)[1].strip()[:35]
-        elif re.match(r'system name\s*=|system name:', sl):
-            dev['System Name'] = re.split(r'[=:]', s, 1)[1].strip()
-        elif re.match(r'system desc\w*\s*=|system desc\w*:', sl):
-            dev['Description'] = re.split(r'[=:]', s, 1)[1].strip()[:60]
+        # Chassis ID: grab human-readable from summary line
+        # "Chassis Subtype = Locally assigned, Id: S7-1500..."
+        m = re.match(r'chassis subtype\s*=.*?,\s*id:\s*(.+)', sl)
+        if m:
+            # Get original case from s using same offset
+            idx = s.lower().find(', id:')
+            if idx != -1:
+                dev['Chassis ID'] = s[idx+5:].strip()[:30]
+
+        # Port Id: port-001...
+        elif re.match(r'port id:', sl):
+            dev['Port ID'] = s.split(':', maxsplit=1)[1].strip()[:35]
+
+        # System Name = S7-1500
+        elif re.match(r'system name\s*=', sl):
+            dev['System Name'] = s.split('=', maxsplit=1)[1].strip()
+
+        # System Description = Siemens...
+        elif re.match(r'system description\s*=', sl):
+            dev['Description'] = s.split('=', maxsplit=1)[1].strip()[:70]
+
+        # Management Address = 192.168.x.x
         elif re.match(r'management address\s*=', sl) and 'Mgmt IP' not in dev:
-            val = re.split(r'=', s, 1)[1].strip()
-            # Only store if looks like an IP
+            val = s.split('=', maxsplit=1)[1].strip()
             if re.match(r'\d+\.\d+\.\d+\.\d+', val):
                 dev['Mgmt IP'] = val
-        elif re.match(r'(time to live|ttl)\s*=', sl) and 'TTL' not in dev:
+
+        # Time To Live = 20 sec
+        elif re.match(r'time to live\s*=', sl) and 'TTL' not in dev:
             m2 = re.search(r'=\s*(\d+)', s)
             if m2:
                 dev['TTL'] = m2.group(1)
