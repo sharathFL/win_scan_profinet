@@ -121,8 +121,13 @@ def capture_profinet(interface, packet_count=20, timeout=30):
     for line in lines:
         print(line)
 
-def _parse_lldp_verbose(text):
+def _parse_lldp_verbose(text, debug=False):
     """Parse tshark -V verbose LLDP output into device dicts keyed by MAC."""
+    if debug:
+        print("=== RAW TSHARK OUTPUT ===")
+        print(text[:3000])
+        print("=========================\n")
+
     devices = {}
     current_mac = None
     dev = {}
@@ -133,7 +138,6 @@ def _parse_lldp_verbose(text):
                 devices[current_mac] = dev.copy()
 
     for line in text.splitlines():
-        # New frame
         m = re.match(r'^Frame \d+:', line)
         if m:
             flush()
@@ -143,33 +147,37 @@ def _parse_lldp_verbose(text):
 
         s = line.strip()
 
-        # Source MAC from Ethernet header
-        if s.startswith('Source:') and current_mac is None:
+        # Source MAC — tshark verbose shows "Src: VendorName (aa:bb:cc:dd:ee:ff)"
+        if current_mac is None and ('Src:' in s or 'Source:' in s):
             mac = re.search(r'([0-9a-f]{2}(?::[0-9a-f]{2}){5})', s, re.I)
             if mac:
                 current_mac = mac.group(1).lower()
 
-        # LLDP fields
-        if s.startswith('Chassis ID ='):
-            dev['Chassis ID'] = s.split('=', 1)[1].strip()
-        elif s.startswith('Port ID ='):
-            dev['Port ID'] = s.split('=', 1)[1].strip()[:35]
-        elif s.startswith('System Name ='):
-            dev['System Name'] = s.split('=', 1)[1].strip()
-        elif s.startswith('System Description ='):
-            dev['Description'] = s.split('=', 1)[1].strip()[:60]
-        elif s.startswith('Management Address =') and 'Mgmt IP' not in dev:
-            dev['Mgmt IP'] = s.split('=', 1)[1].strip()
-        elif 'TTL' in s and 'TTL' not in dev:
-            m = re.search(r'TTL\s*=\s*(\d+)', s)
-            if m:
-                dev['TTL'] = m.group(1)
+        # Case-insensitive field matching
+        sl = s.lower()
+        if re.match(r'chassis id\s*=|chassis id:', sl):
+            dev['Chassis ID'] = re.split(r'[=:]', s, 1)[1].strip()
+        elif re.match(r'port id\s*=|port id:', sl):
+            dev['Port ID'] = re.split(r'[=:]', s, 1)[1].strip()[:35]
+        elif re.match(r'system name\s*=|system name:', sl):
+            dev['System Name'] = re.split(r'[=:]', s, 1)[1].strip()
+        elif re.match(r'system desc\w*\s*=|system desc\w*:', sl):
+            dev['Description'] = re.split(r'[=:]', s, 1)[1].strip()[:60]
+        elif re.match(r'management address\s*=', sl) and 'Mgmt IP' not in dev:
+            val = re.split(r'=', s, 1)[1].strip()
+            # Only store if looks like an IP
+            if re.match(r'\d+\.\d+\.\d+\.\d+', val):
+                dev['Mgmt IP'] = val
+        elif re.match(r'(time to live|ttl)\s*=', sl) and 'TTL' not in dev:
+            m2 = re.search(r'=\s*(\d+)', s)
+            if m2:
+                dev['TTL'] = m2.group(1)
 
     flush()
     return devices
 
 # --devices: parse LLDP verbose output and print device table
-def scan_devices(interface, timeout=30):
+def scan_devices(interface, timeout=30, debug=False):
     print(f"=== Device Scan via LLDP (timeout: {timeout}s) ===\n")
     out = _tshark_run(['-i', interface,
                        '-f', 'ether proto 0x88cc',
@@ -179,7 +187,7 @@ def scan_devices(interface, timeout=30):
         print("No LLDP packets found.")
         return
 
-    devices = _parse_lldp_verbose(out)
+    devices = _parse_lldp_verbose(out, debug=debug)
 
     if not devices:
         print("No devices parsed from LLDP.")
@@ -215,6 +223,7 @@ if __name__ == "__main__":
     parser.add_argument("--profinet",     action="store_true", help="Capture PROFINET-RT packets")
     parser.add_argument("--devices",      action="store_true", help="Scan devices via LLDP (pretty table)")
     parser.add_argument("--arp",          type=str, metavar="SUBNET", help="ARP scan subnet e.g. 192.168.1.0/24")
+    parser.add_argument("--debug",        action="store_true", help="Print raw tshark output for troubleshooting")
     args = parser.parse_args()
 
     if args.list_ifaces or not any([args.all, args.lldp, args.profinet, args.devices, args.arp]):
@@ -241,7 +250,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if args.devices:
-        scan_devices(interface=args.interface, timeout=args.timeout)
+        scan_devices(interface=args.interface, timeout=args.timeout, debug=args.debug)
     elif args.lldp:
         capture_lldp(interface=args.interface, packet_count=args.count, timeout=args.timeout)
     elif args.profinet:
