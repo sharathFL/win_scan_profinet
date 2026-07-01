@@ -100,8 +100,8 @@ def parse_profinet_packet(packet):
         print(f"  Error parsing PROFINET: {e}")
 
 # Capture packets from interface
-def capture_packets(interface=None, packet_count=10, packet_filter=None):
-    print(f"\n=== Capturing Packets (Count: {packet_count}) ===")
+def capture_packets(interface=None, packet_count=10, packet_filter=None, timeout=10):
+    print(f"\n=== Capturing Packets (Count: {packet_count}, Timeout: {timeout}s) ===")
     try:
         if packet_filter:
             if interface:
@@ -114,9 +114,9 @@ def capture_packets(interface=None, packet_count=10, packet_filter=None):
             else:
                 cap = pyshark.LiveCapture()
 
-        for i, packet in enumerate(cap):
-            if i >= packet_count:
-                break
+        cap.sniff(packet_count=packet_count, timeout=timeout)
+
+        for packet in cap:
             print(f"\n[{packet.number}] {packet.highest_layer}")
             if 'IP' in packet:
                 print(f"  SRC: {packet['IP'].src} -> DST: {packet['IP'].dst}")
@@ -132,24 +132,26 @@ def capture_packets(interface=None, packet_count=10, packet_filter=None):
         print(f"Error: {e}")
 
 # Capture LLDP packets only
-def capture_lldp(interface=None, packet_count=10):
-    print(f"=== Capturing LLDP Packets ===")
+def capture_lldp(interface=None, packet_count=10, timeout=10):
+    print(f"=== Capturing LLDP Packets (timeout: {timeout}s) ===")
     try:
         if interface:
             cap = pyshark.LiveCapture(interface=interface, bpf_filter="lldp")
         else:
             cap = pyshark.LiveCapture(bpf_filter="lldp")
 
-        for i, packet in enumerate(cap):
-            if i >= packet_count:
-                break
+        cap.sniff(packet_count=packet_count, timeout=timeout)
+
+        if len(cap) == 0:
+            print("No LLDP packets found. Check if connected to managed network switch.")
+        for packet in cap:
             parse_lldp_packet(packet)
     except Exception as e:
         print(f"Error: {e}")
 
 # Capture PROFINET packets only
-def capture_profinet(interface=None, packet_count=10):
-    print(f"=== Capturing PROFINET Packets ===")
+def capture_profinet(interface=None, packet_count=10, timeout=10):
+    print(f"=== Capturing PROFINET Packets (timeout: {timeout}s) ===")
     try:
         pn_filter = "(tcp.port == 34964) || (tcp.port == 34965) || (tcp.port == 34960) || (tcp.port == 2869) || (tcp.port == 3702)"
 
@@ -158,9 +160,11 @@ def capture_profinet(interface=None, packet_count=10):
         else:
             cap = pyshark.LiveCapture(bpf_filter=pn_filter)
 
-        for i, packet in enumerate(cap):
-            if i >= packet_count:
-                break
+        cap.sniff(packet_count=packet_count, timeout=timeout)
+
+        if len(cap) == 0:
+            print("No PROFINET packets found. Check if PLC/industrial devices on network.")
+        for packet in cap:
             parse_profinet_packet(packet)
     except Exception as e:
         print(f"Error: {e}")
