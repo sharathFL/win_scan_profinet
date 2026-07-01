@@ -214,47 +214,45 @@ def capture_profinet(interface=None, packet_count=10, timeout=10):
     except Exception as e:
         print(f"Error: {e}")
 
-# Capture all packets (no filter) with formatted output
-def capture_all(interface=None, packet_count=10, timeout=10):
-    print(f"=== Capturing All Packets (timeout: {timeout}s) ===\n")
+# Stream packets live to terminal
+def capture_all(interface=None, packet_count=10, timeout=30):
+    print(f"=== Capturing All Packets — live stream (Ctrl+C to stop) ===\n")
+    print(f"{'#':<5} {'Src':<18} {'Dst':<18} {'Protocol':<20} {'Len':<6} Info")
+    print("-" * 110)
     try:
-        # Use tshark with formatted output fields
-        cmd = [TSHARK_PATH, '-i', interface or '1', '-a', f'duration:{timeout}', '-c', str(packet_count),
-               '-T', 'fields', '-e', 'frame.number', '-e', 'frame.time_epoch', '-e', 'ip.src', '-e', 'ip.dst',
-               '-e', 'eth.src', '-e', 'eth.dst', '-e', 'frame.protocols', '-e', 'frame.len', '-e', 'info']
+        cmd = [TSHARK_PATH, '-i', interface or '1',
+               '-a', f'duration:{timeout}', '-c', str(packet_count),
+               '-T', 'fields',
+               '-e', 'frame.number',
+               '-e', 'ip.src', '-e', 'ip.dst',
+               '-e', 'eth.src', '-e', 'eth.dst',
+               '-e', 'frame.protocols',
+               '-e', 'frame.len',
+               '-l']  # -l = line buffered (stream output)
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
 
-        if result.returncode != 0:
-            # Fallback: no field filter, just raw output
-            cmd_simple = [TSHARK_PATH, '-i', interface or '1', '-a', f'duration:{timeout}', '-c', str(packet_count)]
-            result = subprocess.run(cmd_simple, capture_output=True, text=True)
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            fields = line.split('\t')
+            if len(fields) >= 6:
+                num      = fields[0]
+                src      = fields[1] or fields[3] or "?"   # ip.src else eth.src
+                dst      = fields[2] or fields[4] or "?"   # ip.dst else eth.dst
+                proto    = fields[5][:20] if fields[5] else "?"
+                length   = fields[6] if len(fields) > 6 else "?"
+                print(f"{num:<5} {src:<18} {dst:<18} {proto:<20} {length:<6}")
+            else:
+                print(line)
 
-        lines = result.stdout.strip().split('\n')
-        if not lines or lines[0] == '':
-            print("No packets captured.")
-            return
-
-        print(f"{'#':<4} {'Time':<12} {'Src IP':<15} {'Dst IP':<15} {'Protocol':<20} {'Length':<8} {'Info':<50}")
-        print("-" * 140)
-
-        for i, line in enumerate(lines, 1):
-            if line.strip():
-                fields = line.split('\t')
-                if len(fields) >= 7:
-                    pkt_num = fields[0] if fields[0] else str(i)
-                    timestamp = fields[1][:10] if len(fields[1]) > 10 else fields[1]
-                    src_ip = fields[2][:15] if fields[2] else "N/A"
-                    dst_ip = fields[3][:15] if fields[3] else "N/A"
-                    protocols = fields[6][:20] if len(fields) > 6 and fields[6] else "N/A"
-                    length = fields[7] if len(fields) > 7 else "0"
-                    info = fields[8][:50] if len(fields) > 8 else ""
-
-                    print(f"{pkt_num:<4} {timestamp:<12} {src_ip:<15} {dst_ip:<15} {protocols:<20} {length:<8} {info:<50}")
-                else:
-                    print(line)
+        proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        print("\nCapture stopped.")
     except FileNotFoundError:
-        print("Error: tshark not found. Install Wireshark with tshark.")
+        print("Error: tshark not found. Install Wireshark.")
     except Exception as e:
         print(f"Error: {e}")
 
