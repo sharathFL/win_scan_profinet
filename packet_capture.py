@@ -141,17 +141,33 @@ def capture_packets(interface=None, packet_count=10, packet_filter=None, timeout
 def capture_lldp(interface=None, packet_count=10, timeout=10):
     print(f"=== Capturing LLDP Packets (timeout: {timeout}s) ===")
     try:
-        if interface:
-            cap = pyshark.LiveCapture(interface=interface, bpf_filter="lldp")
-        else:
-            cap = pyshark.LiveCapture(bpf_filter="lldp")
+        # Use tshark directly to avoid pyshark event loop issues on Windows
+        cmd = ['tshark', '-i', interface or '1', '-f', 'lldp', '-a', f'duration:{timeout}', '-c', str(packet_count), '-T', 'fields', '-e', 'frame.number', '-e', 'lldp.chassis.id', '-e', 'lldp.port.id', '-e', 'lldp.system.name']
 
-        cap.sniff(packet_count=packet_count, timeout=timeout)
+        result = subprocess.run(cmd, capture_output=True, text=True)
 
-        if len(cap) == 0:
+        if result.returncode != 0:
+            print(f"tshark error: {result.stderr}")
+            return
+
+        lines = result.stdout.strip().split('\n')
+        if not lines or lines[0] == '':
             print("No LLDP packets found. Check if connected to managed network switch.")
-        for packet in cap:
-            parse_lldp_packet(packet)
+            return
+
+        for line in lines:
+            if line.strip():
+                fields = line.split('\t')
+                print(f"\n[LLDP Packet]")
+                if len(fields) > 1:
+                    print(f"  Frame: {fields[0]}")
+                    print(f"  Chassis ID: {fields[1]}")
+                    if len(fields) > 2:
+                        print(f"  Port ID: {fields[2]}")
+                    if len(fields) > 3:
+                        print(f"  System Name: {fields[3]}")
+    except FileNotFoundError:
+        print("Error: tshark not found. Install Wireshark with tshark.")
     except Exception as e:
         print(f"Error: {e}")
 
@@ -159,19 +175,31 @@ def capture_lldp(interface=None, packet_count=10, timeout=10):
 def capture_profinet(interface=None, packet_count=10, timeout=10):
     print(f"=== Capturing PROFINET Packets (timeout: {timeout}s) ===")
     try:
-        pn_filter = "(tcp.port == 34964) || (tcp.port == 34965) || (tcp.port == 34960) || (tcp.port == 2869) || (tcp.port == 3702)"
+        pn_filter = "tcp.port == 34964 or tcp.port == 34965 or tcp.port == 34960 or tcp.port == 2869 or tcp.port == 3702"
 
-        if interface:
-            cap = pyshark.LiveCapture(interface=interface, bpf_filter=pn_filter)
-        else:
-            cap = pyshark.LiveCapture(bpf_filter=pn_filter)
+        cmd = ['tshark', '-i', interface or '1', '-f', pn_filter, '-a', f'duration:{timeout}', '-c', str(packet_count), '-T', 'fields', '-e', 'frame.number', '-e', 'ip.src', '-e', 'ip.dst', '-e', 'tcp.srcport', '-e', 'tcp.dstport']
 
-        cap.sniff(packet_count=packet_count, timeout=timeout)
+        result = subprocess.run(cmd, capture_output=True, text=True)
 
-        if len(cap) == 0:
+        if result.returncode != 0:
+            print(f"tshark error: {result.stderr}")
+            return
+
+        lines = result.stdout.strip().split('\n')
+        if not lines or lines[0] == '':
             print("No PROFINET packets found. Check if PLC/industrial devices on network.")
-        for packet in cap:
-            parse_profinet_packet(packet)
+            return
+
+        for line in lines:
+            if line.strip():
+                fields = line.split('\t')
+                print(f"\n[PROFINET Packet]")
+                if len(fields) > 1:
+                    print(f"  Frame: {fields[0]}")
+                    print(f"  Source: {fields[1]}:{fields[3] if len(fields) > 3 else '?'}")
+                    print(f"  Destination: {fields[2]}:{fields[4] if len(fields) > 4 else '?'}")
+    except FileNotFoundError:
+        print("Error: tshark not found. Install Wireshark with tshark.")
     except Exception as e:
         print(f"Error: {e}")
 
